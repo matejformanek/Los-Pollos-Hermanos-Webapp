@@ -1,0 +1,106 @@
+stages:
+  - build
+  - test
+  - lint
+  - doc
+  - package
+
+buildContainer:
+  stage: build
+  image: $CI_REGISTRY/ict/images/alpine/ci:latest
+  variables:
+    BUILDAH_ISOLATION: chroot
+    IMAGE_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
+  before_script:
+    - apk add buildah fuse-overlayfs
+    - buildah login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - buildah info
+  script:
+    - echo "Building container"
+    - echo "Tag $IMAGE_TAG"
+    - buildah build --tag $IMAGE_TAG -f dockerfile
+    - buildah push $IMAGE_TAG
+  only:
+    - main
+    - develop
+
+test_python:
+  stage: test
+  image: python:3.10
+  script:
+    - pip install --no-cache-dir -r requirements.txt
+    - cd Tests
+    - ./test_python.sh
+  artifacts:
+    name: "Python unit test reports"
+    expire_in: 5 day
+    paths:
+      - "**/Python_unit_tests/python_log.txt"
+    when: on_failure
+  only:
+    changes:
+      - main.py
+      - src/*
+      - Database/*
+      - Tests/*
+
+test_database:
+  stage: test
+  image: postgres:latest
+  script:
+    - cd Tests
+    - ./test_database.sh
+  artifacts:
+    name: "Database test reports"
+    expire_in: 5 day
+    paths:
+      - "**/Database_tests/database_log.txt"
+    when: on_failure
+  only:
+    changes:
+      - main.py
+      - src/*
+      - Database/*
+      - Tests/*
+
+lint_code:
+  stage: lint
+  image: python:3.10
+  script:
+    - pip install --no-cache-dir -r requirements.txt
+    - pylint src/ main.py > pylint_report.txt || echo "Pylint reported issues"
+  artifacts:
+    name: "Pylint report"
+    expire_in: 5 day
+    paths:
+      - pylint_report.txt
+    when: always
+
+build_documentation:
+  stage: doc
+  image: python:3.10
+  script:
+    - pip install --no-cache-dir -r requirements.txt
+    - cd docs
+    - sphinx-apidoc -o source/ .
+    - sphinx-build -b html . _build/html
+  artifacts:
+    paths:
+      - docs/_build/html
+    expire_in: 30 days
+  only:
+    - main
+    - develop
+
+create_install_package:
+  stage: package
+  image: alpine:latest
+  script:
+    - apk --no-cache add zip
+    - zip -r installation_package.zip .
+  artifacts:
+    paths:
+      - ./installation_package.zip 
+  only:
+    - main
+    - develop
